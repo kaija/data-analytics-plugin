@@ -1,0 +1,20 @@
+{
+  "name": "data-analytics-skill-suite",
+  "owner": {
+    "name": "Data Analytics Team"
+  },
+  "metadata": {
+    "description": "Multi-agent skill suite for structured, vector, and graph database analytics",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "data-analytics-skill-suite",
+      "source": "./",
+      "description": "Multi-agent skill suite for querying structured, vector, and graph databases",
+      "version": "1.0.0",
+      "category": "data-science",
+      "tags": ["athena", "glue", "vector-db", "graph-db", "data-catalog"]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "backend": "qdrant",
+  "connection": {
+    "host": "localhost",
+    "port": 6333,
+    "api_key": "",
+    "environment": "",
+    "database": "",
+    "extra": {}
+  }
+}

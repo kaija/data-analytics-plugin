@@ -1,0 +1,18 @@
+{
+  "_comment": "Graph DB skill configuration. Set 'backend' to 'neo4j' or 'neptune-gremlin'.",
+  "backend": "neo4j",
+  "connection": {
+    "uri": "bolt://localhost:7687",
+    "username": "neo4j",
+    "password": "secret",
+    "database": "neo4j"
+  },
+  "_neptune_example": {
+    "backend": "neptune-gremlin",
+    "connection": {
+      "uri": "wss://your-neptune-cluster.cluster-xxxx.us-east-1.neptune.amazonaws.com:8182/gremlin",
+      "region": "us-east-1",
+      "iam_auth": true
+    }
+  }
+}

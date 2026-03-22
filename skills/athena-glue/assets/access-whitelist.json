@@ -1,0 +1,13 @@
+{
+  "version": "1.0",
+  "allowed": [
+    {
+      "database": "analytics_prod",
+      "tables": ["events", "users", "sessions"]
+    },
+    {
+      "database": "data_lake",
+      "tables": ["*"]
+    }
+  ]
+}
