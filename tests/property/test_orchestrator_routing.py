@@ -14,26 +14,26 @@ ORCHESTRATOR_PATH = os.path.join(
 
 # (keyword, expected skill name) pairs per intent classification rules
 KEYWORD_SKILL_PAIRS = [
-    # Athena/Glue
+    # Athena/Glue (primary analysis)
     ("SQL", "athena-glue"),
     ("Athena", "athena-glue"),
     ("tables", "athena-glue"),
     ("schemas", "athena-glue"),
     ("databases", "athena-glue"),
     ("structured data", "athena-glue"),
-    # Vector DB
+    # Vector DB (assistive — semantic clue discovery)
     ("Embeddings", "vector-db"),
     ("vectors", "vector-db"),
     ("similarity search", "vector-db"),
     ("semantic search", "vector-db"),
-    # Graph DB
+    # Graph DB (assistive — relationship discovery)
     ("Graphs", "graph-db"),
     ("nodes", "graph-db"),
     ("relationships", "graph-db"),
     ("traversal", "graph-db"),
     ("Cypher", "graph-db"),
     ("Gremlin", "graph-db"),
-    # Catalog Mapper
+    # Catalog Mapper (assistive — lineage tracking)
     ("Lineage", "catalog-mapper"),
     ("catalog", "catalog-mapper"),
     ("mapping", "catalog-mapper"),

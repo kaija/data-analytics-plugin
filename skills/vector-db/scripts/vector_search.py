@@ -75,7 +75,7 @@ def load_config(config_path: str | None = None) -> dict:
 
 def vector_search(
     collection: str,
-    query_embedding: list[float],
+    query_embedding: list[float] | str,
     top_k: int = DEFAULT_TOP_K,
     config_path: str | None = None,
 ) -> dict:
@@ -83,7 +83,8 @@ def vector_search(
 
     Args:
         collection: Name of the collection / index to search.
-        query_embedding: The query vector.
+        query_embedding: The query vector (list of floats) or a plain text
+            query string (for backends with built-in embedding like AlloyDB).
         top_k: Number of nearest neighbours to return.
         config_path: Optional path to vector-config.json.
 
@@ -113,14 +114,17 @@ def main() -> None:
     """Entry point for standalone invocation.
 
     Usage:
-        vector_search.py <collection> '<query_embedding_json>' [top_k]
+        vector_search.py <collection> '<query_embedding_json_or_text>' [top_k]
+
+    The query can be either a JSON array of floats (raw embedding) or a
+    plain text string (for backends with built-in embedding like AlloyDB).
     """
     if len(sys.argv) < 3:
         error = {
             "error": "missing_argument",
             "message": (
                 "Usage: vector_search.py <collection> "
-                "'<query_embedding_json>' [top_k]"
+                "'<query_embedding_json_or_text>' [top_k]"
             ),
         }
         print(json.dumps(error), file=sys.stderr)
@@ -128,23 +132,17 @@ def main() -> None:
 
     collection = sys.argv[1]
 
+    # Try to parse as JSON embedding array; if that fails, treat as plain
+    # text query (for backends with built-in embedding like AlloyDB).
+    raw_query = sys.argv[2]
     try:
-        query_embedding = json.loads(sys.argv[2])
+        query_embedding = json.loads(raw_query)
+        if not isinstance(query_embedding, list):
+            # Parsed JSON but not a list — treat as text query
+            query_embedding = raw_query
     except json.JSONDecodeError:
-        error = {
-            "error": "invalid_argument",
-            "message": "query_embedding must be a valid JSON array of floats",
-        }
-        print(json.dumps(error), file=sys.stderr)
-        sys.exit(1)
-
-    if not isinstance(query_embedding, list):
-        error = {
-            "error": "invalid_argument",
-            "message": "query_embedding must be a JSON array of floats",
-        }
-        print(json.dumps(error), file=sys.stderr)
-        sys.exit(1)
+        # Not valid JSON — treat as a plain text query string
+        query_embedding = raw_query
 
     top_k = DEFAULT_TOP_K
     if len(sys.argv) >= 4:

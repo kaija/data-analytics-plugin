@@ -46,6 +46,7 @@ SUPPORTED_BACKENDS: list[str] = [
     "chromadb",
     "milvus",
     "pgvector",
+    "alloydb",
 ]
 
 
@@ -772,6 +773,253 @@ class PgvectorAdapter(VectorBackendAdapter):
         return tables
 
 
+class AlloyDBAdapter(VectorBackendAdapter):
+    """AlloyDB vector backend adapter.
+
+    AlloyDB has built-in embedding support via the ``embedding()`` SQL
+    function, so vector search can be performed with plain text queries
+    directly in SQL — no pre-computed embeddings required.
+
+    The ``search()`` method accepts *either* a list of floats (raw
+    embedding) or a plain text string.  When a string is provided the
+    adapter delegates to AlloyDB's ``embedding('text-embedding-005', ...)``
+    function to compute the vector on the server side.
+
+    Connection config keys:
+        host, port, database, user, password — standard PostgreSQL params.
+        table — the table containing the ``embedding`` column (default
+            taken from the ``collection`` key).
+        embedding_column — name of the vector column (default ``embedding``).
+        embedding_model — model id used by the ``embedding()`` function
+            (default ``text-embedding-005``).
+    """
+
+    def __init__(self) -> None:
+        self._client: Any | None = None
+        self._table: str | None = None
+        self._embedding_column: str = "embedding"
+        self._embedding_model: str = "text-embedding-005"
+
+    def connect(self, config: dict) -> None:
+        try:
+            import psycopg2  # type: ignore[import-untyped]
+        except ImportError:
+            raise ConnectionError(
+                "AlloyDB: failed to connect — the 'psycopg2' package is not "
+                "installed. Install it with: pip install psycopg2-binary"
+            )
+        try:
+            host = config.get("host", "localhost")
+            port = config.get("port", 5432)
+            database = config.get("database", "postgres")
+            user = config.get("user", "postgres")
+            password = config.get("password", "")
+            self._table = config.get("table", config.get("collection", "vectors"))
+            self._embedding_column = config.get("embedding_column", "embedding")
+            self._embedding_model = config.get("embedding_model", "text-embedding-005")
+            self._client = psycopg2.connect(
+                host=host,
+                port=port,
+                dbname=database,
+                user=user,
+                password=password,
+            )
+        except ImportError:
+            raise
+        except Exception as exc:
+            raise ConnectionError(
+                f"AlloyDB: failed to connect — {exc}"
+            ) from exc
+
+    def _ensure_connected(self) -> None:
+        if self._client is None:
+            raise RuntimeError("AlloyDBAdapter is not connected. Call connect() first.")
+
+    def _ensure_table(self) -> None:
+        """Create the target table with vector and alloydb_scann extensions
+        if it does not already exist.  Uses AlloyDB's built-in
+        ``embedding()`` function via a ``GENERATED ALWAYS AS … STORED``
+        column so that embeddings are computed automatically on insert.
+        """
+        self._ensure_connected()
+        table = self._table or "vectors"
+        emb_col = self._embedding_column
+        model = self._embedding_model
+
+        cur = self._client.cursor()
+        # Install required extensions (idempotent)
+        cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+        cur.execute("CREATE EXTENSION IF NOT EXISTS alloydb_scann;")
+
+        # Check whether the table exists
+        cur.execute(
+            "SELECT EXISTS ("
+            "  SELECT 1 FROM information_schema.tables "
+            "  WHERE table_schema = 'public' AND table_name = %s"
+            ");",
+            (table,),
+        )
+        exists = cur.fetchone()[0]
+
+        if not exists:
+            cur.execute(
+                f"CREATE TABLE {table} ("
+                f"  id SERIAL PRIMARY KEY,"
+                f"  content TEXT,"
+                f"  metadata JSONB DEFAULT '{{}}'::jsonb,"
+                f"  {emb_col} vector(768) GENERATED ALWAYS AS "
+                f"    (embedding({model!r}, content)) STORED"
+                f");"
+            )
+            self._client.commit()
+
+        cur.close()
+
+    # ------------------------------------------------------------------
+    # search — accepts text (str) OR raw embedding (list[float])
+    # ------------------------------------------------------------------
+    def search(
+        self, query_embedding: list[float] | str, top_k: int = 10
+    ) -> list[VectorResult]:
+        """Perform vector similarity search.
+
+        Args:
+            query_embedding: Either a plain-text query string (AlloyDB
+                computes the embedding server-side) or a list of floats.
+            top_k: Number of nearest neighbours to return.
+        """
+        self._ensure_connected()
+        self._ensure_table()
+        table = self._table or "vectors"
+        emb_col = self._embedding_column
+
+        cur = self._client.cursor()
+        if isinstance(query_embedding, str):
+            # Use AlloyDB built-in embedding function for text queries
+            query = (
+                f"SELECT id, {emb_col} <=> "
+                f"embedding(%s, %s)::vector AS distance, "
+                f"to_jsonb(t.*) - '{emb_col}' - 'id' AS metadata "
+                f"FROM {table} t "
+                f"ORDER BY {emb_col} <=> "
+                f"embedding(%s, %s)::vector "
+                f"LIMIT %s"
+            )
+            cur.execute(query, (
+                self._embedding_model, query_embedding,
+                self._embedding_model, query_embedding,
+                top_k,
+            ))
+        else:
+            embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
+            query = (
+                f"SELECT id, {emb_col} <=> %s::vector AS distance, "
+                f"to_jsonb(t.*) - '{emb_col}' - 'id' AS metadata "
+                f"FROM {table} t "
+                f"ORDER BY {emb_col} <=> %s::vector "
+                f"LIMIT %s"
+            )
+            cur.execute(query, (embedding_str, embedding_str, top_k))
+
+        results: list[VectorResult] = []
+        for row in cur.fetchall():
+            vid, distance, metadata_raw = row[0], row[1], row[2]
+            metadata = (
+                json.loads(metadata_raw)
+                if isinstance(metadata_raw, str)
+                else (metadata_raw or {})
+            )
+            score = 1.0 / (1.0 + float(distance))
+            results.append(VectorResult(
+                id=str(vid),
+                score=score,
+                metadata=metadata,
+            ))
+        cur.close()
+        return results
+
+    def filter_by_metadata(self, filters: dict) -> list[VectorResult]:
+        self._ensure_connected()
+        self._ensure_table()
+        table = self._table or "vectors"
+        emb_col = self._embedding_column
+
+        # Build WHERE clauses from filters — use column equality when
+        # the filter key matches a real column, otherwise fall back to
+        # JSONB containment on a ``metadata`` column.
+        conditions: list[str] = []
+        params: list[Any] = []
+        for key, value in filters.items():
+            conditions.append(f"{key} = %s")
+            params.append(value)
+
+        where = " AND ".join(conditions) if conditions else "TRUE"
+        query = (
+            f"SELECT id, to_jsonb(t.*) - '{emb_col}' - 'id' AS metadata "
+            f"FROM {table} t WHERE {where}"
+        )
+        cur = self._client.cursor()
+        cur.execute(query, params)
+        results: list[VectorResult] = []
+        for row in cur.fetchall():
+            vid, metadata_raw = row[0], row[1]
+            metadata = (
+                json.loads(metadata_raw)
+                if isinstance(metadata_raw, str)
+                else (metadata_raw or {})
+            )
+            results.append(VectorResult(
+                id=str(vid),
+                score=1.0,
+                metadata=metadata,
+            ))
+        cur.close()
+        return results
+
+    def get_by_id(self, vector_id: str) -> VectorResult | None:
+        self._ensure_connected()
+        self._ensure_table()
+        table = self._table or "vectors"
+        emb_col = self._embedding_column
+
+        query = (
+            f"SELECT id, to_jsonb(t.*) - '{emb_col}' - 'id' AS metadata "
+            f"FROM {table} t WHERE id = %s"
+        )
+        cur = self._client.cursor()
+        cur.execute(query, (vector_id,))
+        row = cur.fetchone()
+        cur.close()
+        if row is None:
+            return None
+        vid, metadata_raw = row[0], row[1]
+        metadata = (
+            json.loads(metadata_raw)
+            if isinstance(metadata_raw, str)
+            else (metadata_raw or {})
+        )
+        return VectorResult(
+            id=str(vid),
+            score=1.0,
+            metadata=metadata,
+        )
+
+    def list_collections(self) -> list[str]:
+        """List tables that have a vector column (via the ``vector`` extension)."""
+        self._ensure_connected()
+        query = """
+            SELECT DISTINCT c.table_name
+            FROM information_schema.columns c
+            WHERE c.table_schema = 'public'
+              AND c.udt_name = 'vector'
+        """
+        cur = self._client.cursor()
+        cur.execute(query)
+        tables = [row[0] for row in cur.fetchall()]
+        cur.close()
+        return tables
+
+
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
@@ -783,6 +1031,7 @@ _BACKEND_MAP: dict[str, type[VectorBackendAdapter]] = {
     "chromadb": ChromaDBAdapter,
     "milvus": MilvusAdapter,
     "pgvector": PgvectorAdapter,
+    "alloydb": AlloyDBAdapter,
 }
 
 

@@ -1,16 +1,16 @@
 # Data Analytics Skill Suite — SKILLS.md
 
-A multi-agent plugin for querying, exploring, and correlating data across AWS Athena/Glue, vector stores, graph databases, and a cross-paradigm catalog mapper. Each skill runs as an isolated sub-agent; an orchestrator routes requests to the right skill automatically.
+A multi-agent plugin for querying, exploring, and correlating data across AWS Athena/Glue, with assistive tools for recording data relationships and finding relation clues via vector stores, graph databases, and a cross-paradigm catalog mapper. The Athena/Glue skill is the primary data analysis engine; the other skills support the analysis workflow by tracking and discovering data relationships. Each skill runs as an isolated sub-agent; an orchestrator routes requests to the right skill automatically.
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Athena/Glue Skill](#athenaglueskill)
-3. [Vector DB Skill](#vector-db-skill)
-4. [Graph DB Skill](#graph-db-skill)
-5. [Catalog Mapper Skill](#catalog-mapper-skill)
+2. [Athena/Glue Skill (Primary Analysis)](#athenaglueskill)
+3. [Vector DB Skill (Assistive — Semantic Clue Discovery)](#vector-db-skill)
+4. [Graph DB Skill (Assistive — Relationship Discovery)](#graph-db-skill)
+5. [Catalog Mapper Skill (Assistive — Lineage Tracking)](#catalog-mapper-skill)
 6. [Generic Query Script](#generic-query-script)
 7. [Query Best Practices](#query-best-practices)
 8. [Access Whitelist Configuration](#access-whitelist-configuration)
@@ -20,20 +20,22 @@ A multi-agent plugin for querying, exploring, and correlating data across AWS At
 
 ## Overview
 
-| Skill | Paradigm | Config file |
-|---|---|---|
-| `athena-glue` | Structured SQL (AWS Athena + Glue) | `skills/athena-glue/assets/access-whitelist.json` |
-| `vector-db` | Vector similarity search | `skills/vector-db/assets/vector-config.json` |
-| `graph-db` | Graph traversal (Neo4j / Neptune) | `skills/graph-db/assets/graph-config.json` |
-| `catalog-mapper` | Cross-paradigm lineage & relationships | `skills/catalog-mapper/assets/catalog-map.json` |
+| Skill | Role | Paradigm | Config file |
+|---|---|---|---|
+| `athena-glue` | Primary analysis | Structured SQL (AWS Athena + Glue) | `skills/athena-glue/assets/access-whitelist.json` |
+| `vector-db` | Assistive — semantic clue discovery | Vector similarity search | `skills/vector-db/assets/vector-config.json` |
+| `graph-db` | Assistive — relationship discovery | Graph traversal (Neo4j / Neptune) | `skills/graph-db/assets/graph-config.json` |
+| `catalog-mapper` | Assistive — lineage tracking | Cross-paradigm lineage & relationships | `skills/catalog-mapper/assets/catalog-map.json` |
 
-The orchestrator agent (`agents/orchestrator.md`) inspects each incoming request and delegates to the appropriate skill. A single request can span multiple skills — the orchestrator aggregates the results before replying.
+The orchestrator agent (`agents/orchestrator.md`) inspects each incoming request and delegates to the appropriate skill. All actual data analysis is performed by the Athena/Glue skill. The vector-db, graph-db, and catalog-mapper skills are assistive tools that record data relationships and find relation clues to support the analysis workflow. A single request can span multiple skills — the orchestrator aggregates the results before replying.
 
 ---
 
-## Athena/Glue Skill
+## Athena/Glue Skill (Primary Analysis)
 
 **Skill directory:** `skills/athena-glue/`
+
+This is the primary data analysis engine. All data querying, exploration, and analysis happens here.
 
 ### Tools
 
@@ -79,22 +81,26 @@ Scanned: 2.3 MB  |  Execution time: 1.42 s
 
 ---
 
-## Vector DB Skill
+## Vector DB Skill (Assistive — Semantic Clue Discovery)
 
 **Skill directory:** `skills/vector-db/`
 
+This is an assistive tool that supports the Athena/Glue analysis workflow. It records data relationships as embeddings and finds relation clues through semantic similarity search. It does not perform primary data analysis.
+
 ### Supported Backends
 
-Pinecone, Weaviate, Qdrant, ChromaDB, Milvus, pgvector.
+Pinecone, Weaviate, Qdrant, ChromaDB, Milvus, pgvector, AlloyDB.
+
+AlloyDB has built-in embedding support — you can pass a plain text query string instead of a pre-computed embedding vector. AlloyDB computes the embedding server-side using the `embedding()` SQL function (e.g. `text-embedding-005`).
 
 ### Tools
 
 | Script | Purpose | Signature |
 |---|---|---|
 | `list_collections.py` | List available collections / indices | `python skills/vector-db/scripts/list_collections.py` |
-| `vector_search.py` | Similarity search by embedding | `python skills/vector-db/scripts/vector_search.py <collection> '<embedding_json>' [top_k]` |
-| `metadata_filter.py` | Filter vectors by metadata key-value pairs | `python skills/vector-db/scripts/metadata_filter.py <collection> '<filters_json>'` |
-| `retrieve_by_id.py` | Retrieve a single vector by ID | `python skills/vector-db/scripts/retrieve_by_id.py <collection> <vector_id>` |
+| `vector_search.py` | Similarity search by embedding or text query to find related data assets | `python skills/vector-db/scripts/vector_search.py <collection> '<embedding_json_or_text>' [top_k]` |
+| `metadata_filter.py` | Filter vectors by metadata to narrow relationship search | `python skills/vector-db/scripts/metadata_filter.py <collection> '<filters_json>'` |
+| `retrieve_by_id.py` | Retrieve a specific relationship record by ID | `python skills/vector-db/scripts/retrieve_by_id.py <collection> <vector_id>` |
 
 ### Configuration
 
@@ -102,14 +108,32 @@ Edit `skills/vector-db/assets/vector-config.json`:
 
 ```json
 {
-  "backend": "qdrant",          // pinecone | weaviate | qdrant | chromadb | milvus | pgvector
+  "backend": "qdrant",
   "connection": {
-    "host": "localhost",        // hostname or cloud endpoint
-    "port": 6333,               // backend-specific port
-    "api_key": "",              // API key (Pinecone, Weaviate cloud, etc.)
-    "environment": "",          // Pinecone environment (e.g. "us-east1-gcp")
-    "database": "",             // pgvector: PostgreSQL database name
-    "extra": {}                 // backend-specific overrides
+    "host": "localhost",
+    "port": 6333,
+    "api_key": "",
+    "environment": "",
+    "database": "",
+    "extra": {}
+  }
+}
+```
+
+AlloyDB configuration (with built-in embedding):
+
+```json
+{
+  "backend": "alloydb",
+  "connection": {
+    "host": "your-alloydb-ip",
+    "port": 5432,
+    "database": "postgres",
+    "user": "postgres",
+    "password": "your-password",
+    "table": "product",
+    "embedding_column": "embedding",
+    "embedding_model": "text-embedding-005"
   }
 }
 ```
@@ -120,11 +144,15 @@ Edit `skills/vector-db/assets/vector-config.json`:
 # List collections
 python skills/vector-db/scripts/list_collections.py
 
-# Similarity search — top 5 results
+# Similarity search — find top 5 related data assets (raw embedding)
 python skills/vector-db/scripts/vector_search.py product-embeddings \
   '[0.12, -0.34, 0.56, ...]' 5
 
-# Metadata filter
+# Similarity search — find top 5 related data assets (text query, AlloyDB)
+python skills/vector-db/scripts/vector_search.py product \
+  'music' 5
+
+# Metadata filter — narrow down by attributes
 python skills/vector-db/scripts/metadata_filter.py product-embeddings \
   '{"category": "electronics", "in_stock": true}'
 
@@ -134,9 +162,11 @@ python skills/vector-db/scripts/retrieve_by_id.py product-embeddings vec_00123
 
 ---
 
-## Graph DB Skill
+## Graph DB Skill (Assistive — Relationship Discovery)
 
 **Skill directory:** `skills/graph-db/`
+
+This is an assistive tool that supports the Athena/Glue analysis workflow. It records entity relationships and finds relation clues through graph traversal and pattern matching. It does not perform primary data analysis.
 
 ### Supported Backends
 
@@ -149,9 +179,9 @@ python skills/vector-db/scripts/retrieve_by_id.py product-embeddings vec_00123
 |---|---|---|
 | `list_schema.py` | List all node labels and relationship types | `python skills/graph-db/scripts/list_schema.py` |
 | `get_properties.py` | Get properties for a label or relationship type | `python skills/graph-db/scripts/get_properties.py <label_or_type>` |
-| `execute_cypher.py` | Run a Cypher query (Neo4j) | `python skills/graph-db/scripts/execute_cypher.py "<cypher>"` |
-| `execute_gremlin.py` | Run a Gremlin query (Neptune / JanusGraph) | `python skills/graph-db/scripts/execute_gremlin.py "<gremlin>"` |
-| `traverse_graph.py` | Traverse from a start node up to N hops (default 3) | `python skills/graph-db/scripts/traverse_graph.py <node_id> [depth]` |
+| `execute_cypher.py` | Run a Cypher query to discover relationships (Neo4j) | `python skills/graph-db/scripts/execute_cypher.py "<cypher>"` |
+| `execute_gremlin.py` | Run a Gremlin query to discover relationships (Neptune) | `python skills/graph-db/scripts/execute_gremlin.py "<gremlin>"` |
+| `traverse_graph.py` | Traverse from a start node to find connected entities | `python skills/graph-db/scripts/traverse_graph.py <node_id> [depth]` |
 
 ### Configuration
 
@@ -183,31 +213,33 @@ Edit `skills/graph-db/assets/graph-config.json`:
 ### Usage Examples
 
 ```bash
-# List schema
+# List schema — discover available entity types and relationships
 python skills/graph-db/scripts/list_schema.py
 
 # Get properties of the Customer node label
 python skills/graph-db/scripts/get_properties.py Customer
 
-# Cypher query (Neo4j)
+# Cypher query — find relationship clues (Neo4j)
 python skills/graph-db/scripts/execute_cypher.py \
   "MATCH (c:Customer)-[:PURCHASED]->(p:Product) RETURN c.name, p.title LIMIT 25"
 
-# Gremlin query (Neptune)
+# Gremlin query — find relationship clues (Neptune)
 python skills/graph-db/scripts/execute_gremlin.py \
   "g.V().hasLabel('Customer').limit(10).valueMap()"
 
-# Traverse 2 hops from node 42
+# Traverse 2 hops from node 42 to discover connected entities
 python skills/graph-db/scripts/traverse_graph.py 42 2
 ```
 
 ---
 
-## Catalog Mapper Skill
+## Catalog Mapper Skill (Assistive — Lineage Tracking)
 
 **Skill directory:** `skills/catalog-mapper/`
 
-Tracks relationships and lineage between data assets across all paradigms. Persists state to `skills/catalog-mapper/assets/catalog-map.json` (auto-created if missing).
+This is an assistive tool that supports the Athena/Glue analysis workflow. It tracks relationships and lineage between data assets across all paradigms, providing provenance context for analysis. It does not perform primary data analysis.
+
+Persists state to `skills/catalog-mapper/assets/catalog-map.json` (auto-created if missing).
 
 ### Asset URI Scheme
 
@@ -233,7 +265,7 @@ graph://Customer                   # Graph node label
 
 | Script | Purpose | Signature |
 |---|---|---|
-| `register_relationship.py` | Register a cross-paradigm relationship | `python skills/catalog-mapper/scripts/register_relationship.py <source_uri> <target_uri> <type> [description]` |
+| `register_relationship.py` | Record a cross-paradigm relationship | `python skills/catalog-mapper/scripts/register_relationship.py <source_uri> <target_uri> <type> [description]` |
 | `query_relationships.py` | Query all relationships for an asset | `python skills/catalog-mapper/scripts/query_relationships.py <asset_uri>` |
 | `list_assets.py` | List all registered assets | `python skills/catalog-mapper/scripts/list_assets.py` |
 | `generate_lineage.py` | Full upstream + downstream lineage report | `python skills/catalog-mapper/scripts/generate_lineage.py <asset_uri>` |
@@ -241,7 +273,7 @@ graph://Customer                   # Graph node label
 ### Usage Examples
 
 ```bash
-# Register a relationship
+# Record a relationship between an Athena table and a vector collection
 python skills/catalog-mapper/scripts/register_relationship.py \
   athena://analytics_prod.events \
   vector://event-embeddings \
@@ -362,7 +394,9 @@ SELECT * FROM analytics_prod.events LIMIT 100;
 
 **Avoid `SELECT COUNT(*)` on large tables** — use Glue table statistics or `fetch_schema.py` instead.
 
-### Vector & Graph — Performance
+### Vector & Graph — Performance (Assistive Tools)
+
+These best practices apply when using the assistive tools for relationship recording and clue discovery.
 
 **Batch sizing**
 
@@ -395,11 +429,11 @@ The whitelist controls which Athena databases and tables the skill is authorized
   "allowed": [
     {
       "database": "analytics_prod",
-      "tables": ["events", "users", "sessions"]   // explicit table list
+      "tables": ["events", "users", "sessions"]
     },
     {
       "database": "data_lake",
-      "tables": ["*"]                              // wildcard — all tables allowed
+      "tables": ["*"]
     }
   ]
 }

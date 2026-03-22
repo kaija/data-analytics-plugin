@@ -26,6 +26,7 @@ from vector_backend import (
     ChromaDBAdapter,
     MilvusAdapter,
     PgvectorAdapter,
+    AlloyDBAdapter,
 )
 
 
@@ -100,6 +101,9 @@ class TestCreateAdapter:
     def test_pgvector_type(self):
         assert isinstance(create_adapter("pgvector", {}), PgvectorAdapter)
 
+    def test_alloydb_type(self):
+        assert isinstance(create_adapter("alloydb", {}), AlloyDBAdapter)
+
     def test_unsupported_backend_raises(self):
         with pytest.raises(UnsupportedBackendError) as exc_info:
             create_adapter("redis", {})
@@ -127,6 +131,7 @@ _BACKEND_PACKAGE_HINTS = {
     "chromadb": (ChromaDBAdapter, "chromadb"),
     "milvus": (MilvusAdapter, "pymilvus"),
     "pgvector": (PgvectorAdapter, "psycopg2"),
+    "alloydb": (AlloyDBAdapter, "psycopg2"),
 }
 
 
@@ -195,7 +200,7 @@ class TestAdapterInitState:
 
     @pytest.mark.parametrize(
         "cls",
-        [PineconeAdapter, WeaviateAdapter, QdrantAdapter, ChromaDBAdapter, MilvusAdapter, PgvectorAdapter],
+        [PineconeAdapter, WeaviateAdapter, QdrantAdapter, ChromaDBAdapter, MilvusAdapter, PgvectorAdapter, AlloyDBAdapter],
     )
     def test_initial_client_is_none(self, cls):
         adapter = cls()
