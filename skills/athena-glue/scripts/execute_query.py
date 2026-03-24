@@ -87,7 +87,21 @@ def execute_query(
     )
     athena = session.client("athena")
 
-    start_resp = athena.start_query_execution(QueryString=sql)
+    start_kwargs: dict = {"QueryString": sql}
+
+    # Resolve Athena output location: env var > workgroup default.
+    # Without an output location or a workgroup that has one configured,
+    # Athena will reject the query with InvalidRequestException.
+    output_location = os.environ.get("ATHENA_OUTPUT_LOCATION")
+    workgroup = os.environ.get("ATHENA_WORKGROUP")
+    if output_location:
+        start_kwargs["ResultConfiguration"] = {
+            "OutputLocation": output_location,
+        }
+    if workgroup:
+        start_kwargs["WorkGroup"] = workgroup
+
+    start_resp = athena.start_query_execution(**start_kwargs)
     query_execution_id = start_resp["QueryExecutionId"]
 
     # Poll until the query completes

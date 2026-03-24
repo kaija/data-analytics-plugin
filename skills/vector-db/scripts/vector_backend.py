@@ -128,6 +128,7 @@ class PineconeAdapter(VectorBackendAdapter):
     def __init__(self) -> None:
         self._client: Any | None = None
         self._index: Any | None = None
+        self._index_name: str = ""
 
     def connect(self, config: dict) -> None:
         try:
@@ -144,6 +145,7 @@ class PineconeAdapter(VectorBackendAdapter):
             index_name = config.get("index", config.get("collection", ""))
             if index_name:
                 self._index = pc.Index(index_name)
+                self._index_name = index_name
             self._client = pc
         except Exception as exc:
             raise ConnectionError(
@@ -174,9 +176,10 @@ class PineconeAdapter(VectorBackendAdapter):
         if self._index is None:
             raise RuntimeError("PineconeAdapter has no index configured. Provide 'index' in config.")
         # Pinecone metadata filtering uses a filter dict in the query call
-        # We use a zero vector of dimension 1 as a dummy — real usage would need proper dimension
+        # Fetch index dimension to build a correctly-sized zero vector
+        dim = self._client.describe_index(self._index_name).dimension
         response = self._index.query(
-            vector=[0.0],
+            vector=[0.0] * dim,
             top_k=100,
             include_metadata=True,
             filter=filters,
@@ -434,9 +437,12 @@ class ChromaDBAdapter(VectorBackendAdapter):
         try:
             host = config.get("host")
             port = config.get("port", 8000)
+            persist_directory = config.get("persist_directory")
             self._collection_name = config.get("collection")
             if host:
                 self._client = chromadb.HttpClient(host=host, port=port)
+            elif persist_directory:
+                self._client = chromadb.PersistentClient(path=persist_directory)
             else:
                 self._client = chromadb.Client()
         except Exception as exc:
@@ -452,31 +458,31 @@ class ChromaDBAdapter(VectorBackendAdapter):
         name = self._collection_name or "default"
         return self._client.get_collection(name)
 
-    def search(self, query_embedding: list[float], top_k: int = 10) -> list[VectorResult]:
+    def search(self, query_embedding: list[float] | str, top_k: int = 10) -> list[VectorResult]:
         self._ensure_connected()
         collection = self._get_collection()
-        response = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
-            include=["metadatas", "distances", "embeddings"],
-        )
+        query_kwargs: dict[str, Any] = {
+            "n_results": top_k,
+            "include": ["metadatas", "distances"],
+        }
+        if isinstance(query_embedding, str):
+            query_kwargs["query_texts"] = [query_embedding]
+        else:
+            query_kwargs["query_embeddings"] = [query_embedding]
+        response = collection.query(**query_kwargs)
         results: list[VectorResult] = []
         ids = response.get("ids", [[]])[0]
         distances = response.get("distances", [[]])[0]
         metadatas = response.get("metadatas", [[]])[0]
-        embeddings = response.get("embeddings")
-        emb_list = embeddings[0] if embeddings else [None] * len(ids)
         for i, vid in enumerate(ids):
             # ChromaDB returns distances; convert to similarity score (1 - distance for L2)
             dist = distances[i] if i < len(distances) else 0.0
             score = 1.0 / (1.0 + dist)
             meta = metadatas[i] if i < len(metadatas) else {}
-            emb = emb_list[i] if i < len(emb_list) else None
             results.append(VectorResult(
                 id=str(vid),
                 score=score,
                 metadata=dict(meta) if meta else {},
-                payload=emb,
             ))
         return results
 
@@ -492,21 +498,17 @@ class ChromaDBAdapter(VectorBackendAdapter):
             where = {"$and": [{k: {"$eq": v}} for k, v in filters.items()]}
         response = collection.get(
             where=where if where else None,
-            include=["metadatas", "embeddings"],
+            include=["metadatas"],
         )
         results: list[VectorResult] = []
         ids = response.get("ids", [])
         metadatas = response.get("metadatas", [])
-        embeddings = response.get("embeddings")
-        emb_list = embeddings if embeddings else [None] * len(ids)
         for i, vid in enumerate(ids):
             meta = metadatas[i] if i < len(metadatas) else {}
-            emb = emb_list[i] if i < len(emb_list) else None
             results.append(VectorResult(
                 id=str(vid),
                 score=1.0,
                 metadata=dict(meta) if meta else {},
-                payload=emb,
             ))
         return results
 
@@ -515,20 +517,17 @@ class ChromaDBAdapter(VectorBackendAdapter):
         collection = self._get_collection()
         response = collection.get(
             ids=[vector_id],
-            include=["metadatas", "embeddings"],
+            include=["metadatas"],
         )
         ids = response.get("ids", [])
         if not ids:
             return None
         metadatas = response.get("metadatas", [])
-        embeddings = response.get("embeddings")
         meta = metadatas[0] if metadatas else {}
-        emb = embeddings[0] if embeddings else None
         return VectorResult(
             id=str(ids[0]),
             score=1.0,
             metadata=dict(meta) if meta else {},
-            payload=emb,
         )
 
     def list_collections(self) -> list[str]:

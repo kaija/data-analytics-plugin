@@ -1,11 +1,9 @@
 {
-  "backend": "qdrant",
+  "backend": "chromadb",
   "connection": {
-    "host": "localhost",
-    "port": 6333,
-    "api_key": "",
-    "environment": "",
-    "database": "",
-    "extra": {}
+    "host": "",
+    "port": 8000,
+    "collection": "semantic_catalog",
+    "persist_directory": "./skills/vector-db/assets/chromadb_store"
   }
 }

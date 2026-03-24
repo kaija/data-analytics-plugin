@@ -100,7 +100,10 @@ def main() -> None:
     """
     try:
         result = list_collections()
-        result_set = [{"collection": c} for c in result["collections"]]
+        result_set = [
+            {"id": c, "score": None, "metadata": {"backend": result["backend"]}, "payload": None}
+            for c in result["collections"]
+        ]
         print(format_query_output("vector", result_set))
     except FileNotFoundError as exc:
         error = {"error": "config_not_found", "message": str(exc)}

@@ -8,6 +8,10 @@
     {
       "database": "data_lake",
       "tables": ["*"]
+    },
+    {
+      "database": "crem_poc_etl",
+      "tables": ["*"]
     }
   ]
 }

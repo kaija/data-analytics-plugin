@@ -88,10 +88,22 @@ def preview_data(
 
     sql = f'SELECT * FROM "{database}"."{table}" LIMIT {int(max_rows)}'
 
-    start_resp = athena.start_query_execution(
-        QueryString=sql,
-        QueryExecutionContext={"Database": database},
-    )
+    start_kwargs: dict = {
+        "QueryString": sql,
+        "QueryExecutionContext": {"Database": database},
+    }
+
+    # Resolve Athena output location: env var > workgroup default.
+    output_location = os.environ.get("ATHENA_OUTPUT_LOCATION")
+    workgroup = os.environ.get("ATHENA_WORKGROUP")
+    if output_location:
+        start_kwargs["ResultConfiguration"] = {
+            "OutputLocation": output_location,
+        }
+    if workgroup:
+        start_kwargs["WorkGroup"] = workgroup
+
+    start_resp = athena.start_query_execution(**start_kwargs)
     query_execution_id = start_resp["QueryExecutionId"]
 
     # Poll until the query completes
