@@ -1,7 +1,7 @@
 {
   "name": "data-analytics-skill-suite",
   "description": "Multi-agent skill suite for querying structured, vector, and graph databases",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": {
     "name": "Data Analytics Team"
   },
